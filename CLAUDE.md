@@ -1,59 +1,73 @@
-# Airport Passenger Flow / Queue Prediction POC
+# Agentic Delivery Skeleton
 
 > **READ THIS FIRST, EVERY SESSION.** This file is the project's memory.
-> A fresh Claude session knows nothing until it reads this. Start every
-> session by reading this file, then `progress/status.md`, then anything
-> under `requirements/` and `decisions/` that is relevant to the task.
+> A fresh session knows nothing until it reads this. Start every session by
+> reading this file, then `progress/status.md`, then `decisions/decision-log.md`,
+> then anything under `research/` and `requirements/` relevant to the task.
 
 ---
 
-## How to use this repo (continuity protocol)
+## What this is
 
-This repo is designed so you can **dump requirements over many sessions and
-never re-explain context**. The rules:
+A **generic, domain-agnostic skeleton** for delivering a project with a team of
+specialist AI agents. It carries **no domain knowledge of its own.** You point
+it at a domain by writing requirements; the agents then research that domain,
+become expert in it, and build the solution — research → architecture → data →
+backend → UI → test → docs.
 
-1. **Start of session:** read `CLAUDE.md` (this file) → `progress/status.md`
-   → relevant files in `requirements/` and `decisions/`. You are now caught up.
-2. **Adding requirements:** the user writes them into `requirements/` (any
-   number of `.md` files, any time). Treat everything there as the source of
-   truth for *what* to build.
-3. **Architecture is frozen in `decisions/decision-log.md`.** Do NOT re-decide
-   anything already recorded there. If a decision must change, append a new
-   dated entry — never silently overwrite.
-4. **End of session:** update `progress/status.md` with what was done, what's
-   next, and any open questions. Commit. This is what makes the *next* session
-   pick up cleanly.
-5. **Commit often.** The git history is the audit trail. The repo is the memory,
-   not the conversation.
+Today it might build an airport tool; tomorrow, anything. The skeleton stays the
+same. Only `requirements/`, `research/`, `decisions/`, and the produced code
+change per project.
 
 ---
 
-## Project at a glance
+## The agents (in `agents/`)
 
-- **Goal:** POC demonstrating passenger flow / queue (wait-time) prediction for
-  an airport.
-- **Audience:** internal / technical (until stated otherwise).
-- **Stack:** Python-centric.
-- **License posture:** any open-source acceptable (internal POC).
-- **Deliverable:** a running local demo (forecast → API → dashboard).
+| Agent | Role |
+|-------|------|
+| `researcher` | Studies the domain, gathers prior art/data/standards, produces a briefing that makes the team expert |
+| `solution-architect` | Turns research + requirements into a frozen architecture; governs the build |
+| `data-engineer` | Builds the data layer + a stable data contract |
+| `backend-engineer` | Builds the backend/API + core logic/models + a stable API contract |
+| `ui-engineer` | Builds the interface against the API contract |
+| `test-engineer` | Verifies logic, contracts, and that the system runs |
+| `doc-writer` | Writes README, architecture note, run guide from the committed artifacts |
 
-The full, frozen architecture is in `decisions/decision-log.md`. Do not
-duplicate it here.
+There is **no orchestration code** — agents are declarative Markdown. Nothing to
+run or maintain beyond the agent files themselves.
 
 ---
 
-## Working rules for agents and sessions
+## How a project flows
 
-- **Expensive-to-reverse decisions** (DB schema, API contract, core model
-  choice) are frozen in `decisions/`. Build against them; don't drift.
-- **Cheap/local decisions** (component layout, query details, validation rules)
-  — just make them, no need to ask.
-- **One source of truth:** if the conversation and a committed file disagree,
-  the committed file wins. Update the file rather than carrying state in chat.
-- **No orchestration code.** Specialists are the Markdown agents in
-  `agents/`. There is deliberately no `orchestra.py` to maintain.
-  (If you run this through Claude Code's native agent system, copy or symlink
-  `agents/` to `.claude/agents/` — Claude Code auto-discovers agents there.)
+1. **You** write requirements into `requirements/` (freely, over many sessions).
+2. **researcher** reads them, studies the domain, writes a briefing to `research/`.
+3. **solution-architect** freezes the architecture in `decisions/decision-log.md`.
+   You approve/tweak the decision sheet once — that's your main input gate.
+4. **data-engineer** → then **backend-engineer + ui-engineer** (parallel) →
+   **test-engineer** → **doc-writer**. Each works against the frozen contracts.
+5. **End of session:** update `progress/status.md`, commit. The repo is the
+   memory, not the conversation.
+
+---
+
+## Continuity protocol (why this survives sessions and devices)
+
+A new session catches up by reading, in order: `CLAUDE.md` → `progress/status.md`
+→ `decisions/decision-log.md` → `research/` + `requirements/`. Context lives in
+committed files, so no session ever re-explains the project and no tokens are
+wasted re-deriving it. See `SETUP.md` for the multi-device git workflow.
+
+---
+
+## Working rules
+
+- **Expensive-to-reverse decisions** (schema, contracts, core approach) are
+  frozen in `decisions/`. Build against them; append-only changes.
+- **Cheap/local decisions** — agents just make them.
+- **One source of truth:** if chat and a committed file disagree, the file wins.
+- **Each agent learns the domain from research + requirements** — it never
+  assumes a previous project's domain or stack.
 
 ---
 
@@ -64,16 +78,19 @@ duplicate it here.
 ├── CLAUDE.md                 ← you are here; read first
 ├── SETUP.md                  ← per-device git workflow + how to run the agents
 ├── requirements/             ← dump requirements here, freely, over time
-│   └── README.md             ← index of requirement files
+│   ├── README.md
+│   └── 00-core.md            ← start-here / how to begin a project
+├── research/                 ← researcher writes the domain briefing here (created on use)
 ├── decisions/
-│   └── decision-log.md       ← FROZEN architecture contract (+ change history)
+│   └── decision-log.md       ← architecture, frozen per project (starts empty)
 ├── progress/
 │   └── status.md             ← updated end of every session
-└── agents/                   ← specialist agent definitions (Markdown)
+└── agents/                   ← the 7 specialist agent definitions (Markdown)
+    ├── researcher.md
     ├── solution-architect.md
     ├── data-engineer.md
-    ├── api-engineer.md
+    ├── backend-engineer.md   (file: api-engineer.md)
     ├── ui-engineer.md
-    ├── qa-engineer.md
-    └── docs-writer.md
+    ├── test-engineer.md      (file: qa-engineer.md)
+    └── doc-writer.md         (file: docs-writer.md)
 ```

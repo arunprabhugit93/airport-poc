@@ -1,11 +1,16 @@
 # Setup & Workflow
 
-How to work on this project across multiple devices and how to run the
+How to work on this skeleton across multiple devices and how to run the
 specialist agents. Read this once per device.
 
 **Repo:** https://github.com/arunprabhugit93/airport-poc
-**Source of truth:** GitHub. The repo (committed files) is the project's memory —
-not any single machine and not OneDrive.
+**Source of truth:** GitHub. The repo (committed files) is the memory — not any
+single machine and not OneDrive.
+
+> The GitHub repo is still named `airport-poc` for now (that was the first
+> project). The contents are a **generic, domain-agnostic agentic delivery
+> skeleton**. You can rename the repo on GitHub later if you want; if you do,
+> update the URLs here and your remote (`git remote set-url origin <new-url>`).
 
 ---
 
@@ -28,11 +33,11 @@ cd airport-poc
   Create one at: GitHub → Settings → Developer settings →
   Personal access tokens → Tokens (classic) → Generate → tick `repo` scope.
 
-> **Why not OneDrive?** Git stores a live database in `.git/`. OneDrive (and
-> iCloud) try to sync those files mid-write, causing `index.lock` / `HEAD.lock`
-> errors and, on multiple devices, possible repo corruption. GitHub is the
-> correct sync layer for git. Keep the working copy outside any cloud-sync
-> folder.
+> **Why not work inside OneDrive/iCloud?** Git stores a live database in
+> `.git/`. Cloud sync tries to copy those files mid-write, causing
+> `index.lock` / `HEAD.lock` errors and possible repo corruption across
+> devices. GitHub is the correct sync layer for git. Keep the working copy
+> outside any cloud-sync folder.
 
 ---
 
@@ -40,15 +45,14 @@ cd airport-poc
 
 ```bash
 git pull                              # get the latest before you start
-# ... dump requirements, run agents, edit files ...
+# ... add requirements, run agents, edit files ...
 git add -A
 git commit -m "what you changed"
 git push                              # share it back so other devices see it
 ```
 
-The single rule that keeps you sane: **always pull before working, always push
-after.** Never edit the same project from two devices without pushing in
-between.
+The single rule: **always pull before working, always push after.** Never edit
+from two devices without pushing in between.
 
 ---
 
@@ -56,31 +60,41 @@ between.
 
 Any new session — human or agent — gets full context by reading, in order:
 
-1. `CLAUDE.md` — project rules + the continuity protocol
+1. `CLAUDE.md` — what the skeleton is + the continuity protocol
 2. `progress/status.md` — current state, next actions, open questions
-3. `decisions/decision-log.md` — the FROZEN architecture (build against it)
-4. `requirements/` — what to build (dump new requirements here freely)
+3. `decisions/decision-log.md` — the frozen architecture for the active project
+4. `research/` + `requirements/` — the domain briefing and what to build
 
 At the **end** of every session, update `progress/status.md` and commit. That
-single habit is what lets the next session pick up cleanly with zero
-re-explaining.
+habit is what lets the next session pick up cleanly with zero re-explaining.
 
 ---
 
-## 4. Running the specialist agents (in Claude Code)
+## 4. Starting a new project (point the skeleton at a domain)
 
-The agents in `agents/` are declarative Markdown — there is **no orchestration
-code to run or maintain**. They execute inside **Claude Code** (the CLI), which
-auto-discovers agent definitions.
+1. Write requirements into `requirements/` — what to build, for whom, to what end.
+2. Run **researcher** → it studies the domain and writes a briefing to `research/`.
+3. Run **solution-architect** → it freezes the architecture in
+   `decisions/decision-log.md`. Approve or tweak the decision sheet once.
+4. Run specialists: **data-engineer** → **backend-engineer + ui-engineer**
+   (parallel) → **test-engineer** → **doc-writer**.
 
-### First time in a clone
-Claude Code looks for agents under `.claude/agents/`. This repo keeps them in
-`agents/` (a portable location). Link them once per clone:
+The agents carry no domain knowledge — they learn it from research and
+requirements and become expert in whatever domain you load.
 
+---
+
+## 5. Running the agents (in Claude Code)
+
+The agents in `agents/` are declarative Markdown — **no orchestration code to
+run or maintain**. They execute inside **Claude Code** (the CLI), which
+auto-discovers agent definitions under `.claude/agents/`.
+
+### First time in a clone — link the agents
 ```bash
 cd ~/Projects/airport-poc
 mkdir -p .claude
-ln -s ../agents .claude/agents      # symlink; or copy if you prefer: cp -r agents .claude/agents
+ln -s ../agents .claude/agents      # symlink; or copy: cp -r agents .claude/agents
 ```
 
 ### Launch
@@ -89,31 +103,27 @@ cd ~/Projects/airport-poc
 claude                               # opens Claude Code in this folder
 ```
 
-Then ask it to run a specialist, e.g.:
-- "Use the solution-architect agent to review the frozen decisions and plan the build."
-- "Run the data-engineer agent to ingest the TSA FOIA + Kaggle data and build the SQLite layer."
+Then ask it to run an agent, e.g.:
+- "Run the researcher agent on the requirements and produce a domain briefing."
+- "Run the solution-architect to freeze the architecture."
 
 ### The agents
-| Agent | Role |
-|-------|------|
-| `solution-architect` | Governs the build; freezes/maintains decisions; reviews other agents' output |
-| `data-engineer` | Ingests real data (TSA FOIA + Kaggle), builds SQLite schema + load layer, publishes the data contract |
-| `api-engineer` | FastAPI forecast endpoints (Prophet) over the data |
-| `ui-engineer` | Streamlit dashboard of current vs predicted queue/wait-times |
-| `qa-engineer` | pytest on model + API; dashboard smoke test |
-| `docs-writer` | README, architecture note, run guide |
+| Agent | File | Role |
+|-------|------|------|
+| researcher | `agents/researcher.md` | Studies the domain; produces the briefing that makes the team expert |
+| solution-architect | `agents/solution-architect.md` | Freezes the architecture; governs the build; reviews output |
+| data-engineer | `agents/data-engineer.md` | Data ingestion, storage, and the data contract |
+| backend-engineer | `agents/api-engineer.md` | Backend/API + core logic/models + the API contract |
+| ui-engineer | `agents/ui-engineer.md` | The interface, built against the API contract |
+| test-engineer | `agents/qa-engineer.md` | Tests logic, contracts, and that the system runs |
+| doc-writer | `agents/docs-writer.md` | README, architecture note, run guide |
 
-Build order: **data-engineer first** (defines the contract), then
-**api-engineer + ui-engineer in parallel**, then **qa-engineer + docs-writer**.
-Each agent uses `isolation: worktree`, so parallel work doesn't collide.
+Build order: **researcher → solution-architect → data-engineer →
+(backend-engineer + ui-engineer in parallel) → test-engineer → doc-writer.**
+The build specialists use `isolation: worktree`, so parallel work doesn't
+collide.
 
----
-
-## 5. Cleanup note (one-time)
-
-A leftover test git repo may exist at `~/Documents/Airport POC/.git` from
-earlier setup. It's unused — remove it:
-
-```bash
-rm -rf "$HOME/Documents/Airport POC/.git"
-```
+> Note: a few filenames still reflect old role names (`api-engineer.md` holds
+> the backend-engineer, `qa-engineer.md` holds the test-engineer,
+> `docs-writer.md` holds the doc-writer). The `name:` field inside each file is
+> authoritative. Rename the files later if you want them to match.

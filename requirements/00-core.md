@@ -1,25 +1,17 @@
-# Core POC scope (seed)
+# Requirements (start here)
 
-> This is a seed file capturing what we've established so far. Expand or
-> override it by adding more files or editing this one.
+> This is the skeleton's default requirements file. It starts empty.
+> Add your project's requirements here (or in new files alongside it).
+> The Researcher and Architect read everything in this folder to learn the
+> domain and build to it.
 
-## What the POC must demonstrate
-- Predict passenger queue length / wait time at airport checkpoints
-  (e.g. security, check-in) over time.
-- Show the forecast in a live dashboard a non-technical viewer can read.
+## How to start a project
+1. Write what you want built, for whom, and to what end. Plain language is fine.
+2. Run the **Researcher** agent — it will study the domain and produce a briefing.
+3. Run the **Solution Architect** — it freezes the architecture in
+   `decisions/decision-log.md`.
+4. Then the specialists (Data → Backend → UI → Test → Doc) build it.
 
-## Confirmed so far
-- Python-centric stack.
-- Any open-source license acceptable (internal POC).
-- Running local demo is the target deliverable.
-- **Data: real historical (TSA FOIA throughput + Kaggle Airport Operations).**
-  No free live queue API exists. See decision #4 in decisions/decision-log.md.
-
-## Open questions for the user (fill in when known)
-- [x] Real data vs synthetic → RESOLVED: real historical data.
-- [ ] How many checkpoints should the demo model? (default: 1–3)
-- [ ] Forecast horizon? (default: next periods at dataset granularity)
-- [ ] Who is the demo audience? (default: internal technical)
-
-## Add more below as you think of them
+## Project requirements
+_(empty — add yours below)_
 -
