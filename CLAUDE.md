@@ -62,6 +62,7 @@ duplicate it here.
 ```
 .
 ├── CLAUDE.md                 ← you are here; read first
+├── SETUP.md                  ← per-device git workflow + how to run the agents
 ├── requirements/             ← dump requirements here, freely, over time
 │   └── README.md             ← index of requirement files
 ├── decisions/
