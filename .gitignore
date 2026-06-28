@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.ipynb_checkpoints/
+
+# Data / DB (POC artifacts — regenerated, not source of truth)
+*.db
+*.sqlite
+*.sqlite3
+data/*.csv
+!data/.gitkeep
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.log
+
+# Claude worktrees (agents create these; never commit them)
+.worktrees/
