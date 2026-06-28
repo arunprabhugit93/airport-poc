@@ -13,6 +13,8 @@ env/
 *.sqlite3
 data/*.csv
 !data/.gitkeep
+projects/dxc-poc/data/airport.duckdb
+projects/dxc-poc/data/models/
 
 # OS / editor
 .DS_Store

@@ -170,8 +170,5 @@ OPS_CLOSE_HOUR: int = 23
 # Forecast horizons written to queue_predictions (minutes ahead).
 FORECAST_HORIZONS_MIN: list[int] = [15, 30, 45, 60, 90, 120]
 
-# How many trailing days of hourly origin points to emit forecasts for (demo).
-FORECAST_LAST_N_DAYS: int = 90
-
 # Global RNG seed for all synthetic generation.
 RANDOM_SEED: int = 42

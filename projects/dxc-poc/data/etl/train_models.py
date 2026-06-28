@@ -38,8 +38,8 @@ PACKAGE_ROOT: Path = Path(__file__).resolve().parents[2]
 DB_PATH: Path = PACKAGE_ROOT / "data" / config.DUCKDB_FILENAME
 MODELS_DIR: Path = PACKAGE_ROOT / "data" / "models"
 
-# Forecast at the airport's busiest area for the headline demo.
-_FORECAST_AREA: str = "SECURITY_TSA"
+_FORECAST_AREAS: tuple[str, ...] = tuple(config.SECURITY_AREAS)
+_ANOMALY_AREA: str = "SECURITY_TSA"
 
 
 # --------------------------------------------------------------------------- #
@@ -85,21 +85,26 @@ def _pax_to_wait(pax_hour: float, area: str) -> float:
     return round(mm_c_wait(lam, mu, lanes), 3)
 
 
-def _origin_timestamps(con: duckdb.DuckDBPyConnection, airport: str) -> list[datetime]:
-    """Hourly origin points for the trailing FORECAST_LAST_N_DAYS (operating hrs)."""
-    max_date = con.execute(
-        "SELECT MAX(obs_date) FROM tsa_throughput WHERE grain='daily' AND airport_code=?",
-        [airport],
-    ).fetchone()[0]
-    end = datetime(max_date.year, max_date.month, max_date.day, 0, 0)
-    start = end - timedelta(days=config.FORECAST_LAST_N_DAYS)
-    origins: list[datetime] = []
-    d = start
-    while d <= end:
-        for hour in range(config.OPS_OPEN_HOUR, config.OPS_CLOSE_HOUR + 1):
-            origins.append(d.replace(hour=hour))
-        d += timedelta(days=1)
-    return origins
+def _origin_timestamps(
+    con: duckdb.DuckDBPyConnection,
+    airport: str,
+    area: str,
+) -> list[datetime]:
+    """Every operating-hour origin point available for the airport/area history."""
+    rows = con.execute(
+        """
+        SELECT DISTINCT
+            CAST(obs_date AS TIMESTAMP) + obs_hour * INTERVAL 1 HOUR AS origin_ts
+        FROM tsa_throughput
+        WHERE grain = 'checkpoint_hour'
+          AND airport_code = ?
+          AND area_type = ?
+          AND obs_hour BETWEEN ? AND ?
+        ORDER BY origin_ts
+        """,
+        [airport, area, config.OPS_OPEN_HOUR, config.OPS_CLOSE_HOUR],
+    ).fetchall()
+    return [row[0] for row in rows]
 
 
 def _write_predictions(con: duckdb.DuckDBPyConnection, rows: list[dict]) -> None:
@@ -149,19 +154,19 @@ def _fit_prophet(daily: pd.DataFrame):
         return None
 
 
-def _stage_prophet(con: duckdb.DuckDBPyConnection, airport: str) -> int:
+def _stage_prophet(con: duckdb.DuckDBPyConnection, airport: str, area: str) -> int:
     daily = _load_daily(con, airport)
-    hourly = _load_hourly(con, airport, _FORECAST_AREA)
+    hourly = _load_hourly(con, airport, area)
     pax_at = _hourly_pax_lookup(hourly)
     model = _fit_prophet(daily)
     if model is not None:
-        joblib.dump(model, MODELS_DIR / f"prophet_{airport}.pkl")
+        joblib.dump(model, MODELS_DIR / f"prophet_{airport}_{area}.pkl")
     else:
         # Persist a small surrogate descriptor so a pickle always exists.
         joblib.dump({"surrogate": "rolling_mean", "airport": airport},
-                    MODELS_DIR / f"prophet_{airport}.pkl")
+                    MODELS_DIR / f"prophet_{airport}_{area}.pkl")
 
-    origins = _origin_timestamps(con, airport)
+    origins = _origin_timestamps(con, airport, area)
     now = datetime.now()
     rows: list[dict] = []
     # Daily mean pax for scaling hourly anchor when an exact ts is missing.
@@ -174,10 +179,10 @@ def _stage_prophet(con: duckdb.DuckDBPyConnection, airport: str) -> int:
             # Anchor at the target hour's pax if known, else mild drift on base.
             t_anchor = target.replace(minute=0, second=0, microsecond=0)
             tgt_pax = pax_at.get(t_anchor, base_pax * (1.0 + 0.01 * (h / 60.0)))
-            wait = _pax_to_wait(tgt_pax, _FORECAST_AREA)
+            wait = _pax_to_wait(tgt_pax, area)
             rows.append({
                 "airport_code": airport,
-                "area_type": _FORECAST_AREA,
+                "area_type": area,
                 "model_name": "prophet",
                 "origin_ts": origin,
                 "horizon_min": h,
@@ -195,7 +200,12 @@ def _stage_prophet(con: duckdb.DuckDBPyConnection, airport: str) -> int:
 # --------------------------------------------------------------------------- #
 # Stage B/C — Darts NBEATS + LSTM (with rolling surrogate fallback)
 # --------------------------------------------------------------------------- #
-def _darts_forecast_series(hourly: pd.DataFrame, model_name: str, airport: str):
+def _darts_forecast_series(
+    hourly: pd.DataFrame,
+    model_name: str,
+    airport: str,
+    area: str,
+):
     """Try a real Darts model; return predicted-pax dict {ts: pax} or None.
 
     Kept short (low epochs / small windows) so the demo build stays fast. Any
@@ -226,7 +236,7 @@ def _darts_forecast_series(hourly: pd.DataFrame, model_name: str, airport: str):
                 n_epochs=3, random_state=config.RANDOM_SEED,
             )
         model.fit(ts)
-        joblib.dump(model, MODELS_DIR / f"{model_name}_{airport}.pkl")
+        joblib.dump(model, MODELS_DIR / f"{model_name}_{airport}_{area}.pkl")
         # We anchor forecasts off the historical series itself for the demo,
         # so we don't need the multi-step output here; return None to use the
         # (cheap, deterministic) surrogate anchoring while still having saved the
@@ -237,19 +247,25 @@ def _darts_forecast_series(hourly: pd.DataFrame, model_name: str, airport: str):
         return None
 
 
-def _stage_darts(con: duckdb.DuckDBPyConnection, airport: str, model_name: str) -> int:
-    hourly = _load_hourly(con, airport, _FORECAST_AREA)
+def _stage_darts(
+    con: duckdb.DuckDBPyConnection,
+    airport: str,
+    model_name: str,
+    area: str,
+) -> int:
+    hourly = _load_hourly(con, airport, area)
     pax_at = _hourly_pax_lookup(hourly)
     # Attempt real training (persists a pkl if it succeeds).
-    _darts_forecast_series(hourly, model_name, airport)
-    if not (MODELS_DIR / f"{model_name}_{airport}.pkl").exists():
+    _darts_forecast_series(hourly, model_name, airport, area)
+    artifact_path = MODELS_DIR / f"{model_name}_{airport}_{area}.pkl"
+    if not artifact_path.exists():
         joblib.dump({"surrogate": "rolling_trend", "airport": airport, "model": model_name},
-                    MODELS_DIR / f"{model_name}_{airport}.pkl")
+                    artifact_path)
 
     # Rolling-mean + slight trend surrogate, deterministic. NBEATS biases flat,
     # LSTM biases slightly upward so the two models look distinct in the UI.
     trend = 1.0 if model_name == "nbeats" else 1.03
-    origins = _origin_timestamps(con, airport)
+    origins = _origin_timestamps(con, airport, area)
     now = datetime.now()
     recent_mean_hourly = float(hourly.tail(24 * 14)["pax"].mean() or 0.0)
     rows: list[dict] = []
@@ -259,10 +275,10 @@ def _stage_darts(con: duckdb.DuckDBPyConnection, airport: str, model_name: str) 
             target = origin + timedelta(minutes=h)
             t_anchor = target.replace(minute=0, second=0, microsecond=0)
             tgt_pax = pax_at.get(t_anchor, base_pax) * (trend ** (h / 60.0))
-            wait = _pax_to_wait(tgt_pax, _FORECAST_AREA)
+            wait = _pax_to_wait(tgt_pax, area)
             rows.append({
                 "airport_code": airport,
-                "area_type": _FORECAST_AREA,
+                "area_type": area,
                 "model_name": model_name,
                 "origin_ts": origin,
                 "horizon_min": h,
@@ -297,7 +313,7 @@ def _severity_for(score: float, z: float) -> str:
 
 
 def _stage_anomaly(con: duckdb.DuckDBPyConnection, airport: str, event_id: int) -> tuple[list[dict], int]:
-    hourly = _load_hourly(con, airport, _FORECAST_AREA).copy()
+    hourly = _load_hourly(con, airport, _ANOMALY_AREA).copy()
     if hourly.empty:
         return [], event_id
     hourly["hour_of_day"] = hourly["ts"].dt.hour
@@ -315,7 +331,7 @@ def _stage_anomaly(con: duckdb.DuckDBPyConnection, airport: str, event_id: int) 
             ts = hourly.loc[idx, "ts"].to_pydatetime()
             expected = float(np.median(pax)) if len(pax) else observed / 3.0
             events.append({
-                "event_id": event_id, "airport_code": airport, "area_type": _FORECAST_AREA,
+                "event_id": event_id, "airport_code": airport, "area_type": _ANOMALY_AREA,
                 "detected_at": ts, "anomaly_type": "SPIKE", "detector": "iforest",
                 "metric": "pax", "observed_value": observed, "expected_value": expected,
                 "score": 0.95, "severity": "HIGH",
@@ -338,7 +354,7 @@ def _stage_anomaly(con: duckdb.DuckDBPyConnection, airport: str, event_id: int) 
             atype = "DROP" if waits[idx] < mean else "SPIKE"
             ts = hourly.iloc[idx]["ts"].to_pydatetime()
             events.append({
-                "event_id": event_id, "airport_code": airport, "area_type": _FORECAST_AREA,
+                "event_id": event_id, "airport_code": airport, "area_type": _ANOMALY_AREA,
                 "detected_at": ts, "anomaly_type": atype, "detector": "ecod",
                 "metric": "wait_min", "observed_value": float(waits[idx]),
                 "expected_value": mean, "score": float(scores[idx]),
@@ -363,7 +379,7 @@ def _stage_anomaly(con: duckdb.DuckDBPyConnection, airport: str, event_id: int) 
             z = abs(pax[idx] - pmean) / (float(pax.std()) or 1.0)
             atype = "SPIKE" if pax[idx] > pmean else "DROP"
             events.append({
-                "event_id": event_id, "airport_code": airport, "area_type": _FORECAST_AREA,
+                "event_id": event_id, "airport_code": airport, "area_type": _ANOMALY_AREA,
                 "detected_at": ts, "anomaly_type": atype, "detector": "iforest",
                 "metric": "pax", "observed_value": float(pax[idx]),
                 "expected_value": pmean, "score": float(scores[idx]),
@@ -414,7 +430,8 @@ def _stage_staffing(con: duckdb.DuckDBPyConnection, airport: str) -> int:
     `expected_wait_min` uses the closed-form M/M/c (the same engine the SimPy
     validation confirms); SimPy itself is invoked by the API's what-if path, so
     we annotate that the heuristic value is the SimPy-equivalent expectation.
-    Only the trailing FORECAST_LAST_N_DAYS are sized (demo scope).
+    Recommendations are written for the full checkpoint-hour history so the demo
+    clock can move freely across the seeded anomaly window.
     """
     rows_written = 0
     now = datetime.now()
@@ -422,13 +439,10 @@ def _stage_staffing(con: duckdb.DuckDBPyConnection, airport: str) -> int:
         hourly = _load_hourly(con, airport, area)
         if hourly.empty:
             continue
-        max_date = hourly["obs_date"].max()
-        cutoff = pd.Timestamp(max_date) - pd.Timedelta(days=config.FORECAST_LAST_N_DAYS)
-        recent = hourly[pd.to_datetime(hourly["obs_date"]) >= cutoff]
         cap = config.LANE_CAPS[area]
         mu = config.SERVICE_RATE_PER_LANE[area]
         recs: list[dict] = []
-        for _, r in recent.iterrows():
+        for _, r in hourly.iterrows():
             pax_hour = int(r["pax"])
             lam = pax_hour / 60.0
             lanes = min_lanes_for_sla(lam, mu, config.SLA_TARGET_MIN, cap)
@@ -480,12 +494,13 @@ def run(db_path: Path | None = None) -> dict[str, int]:
             return counts
 
         for airport in config.AIRPORT_CODES:
-            logger.info("[%s] Stage A: Prophet forecast", airport)
-            counts["predictions"] += _stage_prophet(con, airport)
-            logger.info("[%s] Stage B: NBEATS forecast", airport)
-            counts["predictions"] += _stage_darts(con, airport, "nbeats")
-            logger.info("[%s] Stage C: LSTM forecast", airport)
-            counts["predictions"] += _stage_darts(con, airport, "lstm")
+            for area in _FORECAST_AREAS:
+                logger.info("[%s/%s] Stage A: Prophet forecast", airport, area)
+                counts["predictions"] += _stage_prophet(con, airport, area)
+                logger.info("[%s/%s] Stage B: NBEATS forecast", airport, area)
+                counts["predictions"] += _stage_darts(con, airport, "nbeats", area)
+                logger.info("[%s/%s] Stage C: LSTM forecast", airport, area)
+                counts["predictions"] += _stage_darts(con, airport, "lstm", area)
 
         event_id = _next_event_id(con)
         all_events: list[dict] = []
