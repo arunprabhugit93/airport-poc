@@ -12,13 +12,13 @@
 - Python-centric stack.
 - Any open-source license acceptable (internal POC).
 - Running local demo is the target deliverable.
-- No real passenger data assumed yet → synthetic data is acceptable
-  (CONFIRM if you actually have real data — it changes the model/data layer).
+- **Data: real historical (TSA FOIA throughput + Kaggle Airport Operations).**
+  No free live queue API exists. See decision #4 in decisions/decision-log.md.
 
 ## Open questions for the user (fill in when known)
-- [ ] Do you have real historical passenger/queue data? If yes, where/what format?
+- [x] Real data vs synthetic → RESOLVED: real historical data.
 - [ ] How many checkpoints should the demo model? (default: 1–3)
-- [ ] Forecast horizon? (default: next few hours, hourly buckets)
+- [ ] Forecast horizon? (default: next periods at dataset granularity)
 - [ ] Who is the demo audience? (default: internal technical)
 
 ## Add more below as you think of them

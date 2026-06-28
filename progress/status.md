@@ -5,24 +5,29 @@
 
 ## Current state
 - Repo scaffolded with continuity protocol (CLAUDE.md, requirements/,
-  decisions/, progress/, .claude/agents/).
-- Architecture decision sheet drafted in `decisions/decision-log.md` —
-  **PROPOSED, awaiting user approval.**
-- Specialist agents defined in `.claude/agents/`.
+  decisions/, progress/, agents/).
+- Architecture decision sheet in `decisions/decision-log.md` —
+  **APPROVED & FROZEN (2026-06-28).**
+- Decision #4 resolved: **real historical data** (TSA FOIA throughput +
+  Kaggle Airport Operations). No free live queue API exists.
+- Specialist agents defined in `agents/`.
 - No application code written yet.
 
 ## Next actions
-1. **User to approve or tweak** the decision sheet in `decisions/decision-log.md`.
-2. **User to answer:** real data or synthetic? (the one open architectural call)
-3. Once frozen → data-engineer agent builds the synthetic data generator + SQLite layer.
-4. Then in parallel: api-engineer (FastAPI), ui-engineer (Streamlit).
-5. Then qa-engineer + docs-writer.
+1. **data-engineer**: download/ingest TSA FOIA + Kaggle Operations data,
+   define SQLite schema + load layer, publish the data contract.
+2. Then in parallel: api-engineer (FastAPI forecast endpoints, Prophet),
+   ui-engineer (Streamlit dashboard).
+3. Then qa-engineer (pytest + smoke test) + docs-writer (README, run guide).
 
-## Open questions
-- Real passenger data available, or synthetic? (blocks freezing decision #4)
-- Number of checkpoints, forecast horizon (defaults noted in requirements/00-core.md)
+## Open questions (non-blocking — defaults stand until told otherwise)
+- Number of checkpoints to model (default 1–3) and forecast horizon
+  (default: next periods, granularity per dataset).
+- FOIA data is daily-granular; if the demo needs sub-daily queue depth,
+  add the optional synthetic minute-level layer (noted in decision #4).
 
 ## Session log
 | Date | What happened |
 |------|---------------|
 | 2026-06-28 | Repo scaffolded, decision sheet proposed, agents defined. Git initialized. |
+| 2026-06-28 | Researched live queue APIs — none free/open. Decision #4 set to real historical data. Sheet frozen. |
