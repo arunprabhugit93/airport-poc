@@ -229,3 +229,35 @@ try:
         st.info("Terminal data not available.")
 except Exception:
     pass
+
+# ---------------------------------------------------------------------------
+# 5. Capacity Utilization
+# ---------------------------------------------------------------------------
+st.subheader(f"Capacity Utilization -- {selected}")
+try:
+    from api_client import get_capacity
+    cap_data = get_capacity(demo_now, selected)
+    if cap_data and cap_data.get("areas"):
+        st.metric("Overall Utilization", f"{cap_data['overall_utilization_pct']:.0f}%")
+        cap_areas = cap_data["areas"]
+        fig_cap = go.Figure()
+        area_names = [AREA_LABELS.get(a["area_type"], a["area_type"]) for a in cap_areas]
+        utils = [a["utilization_pct"] for a in cap_areas]
+        bar_colors = [
+            "#e74c3c" if u > 90 else "#f39c12" if u > 75 else "#3498db" if u > 50 else "#2ecc71"
+            for u in utils
+        ]
+        fig_cap.add_trace(go.Bar(
+            x=area_names, y=utils, marker_color=bar_colors,
+            text=[f"{u:.0f}%" for u in utils], textposition="auto",
+        ))
+        fig_cap.add_hline(y=90, line_dash="dash", line_color="#e74c3c", annotation_text="Critical (90%)")
+        fig_cap.update_layout(
+            height=300, yaxis_title="Utilization %", yaxis_range=[0, 110],
+            title=f"{selected} -- Capacity Utilization by Area",
+        )
+        st.plotly_chart(fig_cap, width="stretch")
+    else:
+        st.info("Capacity data not available.")
+except Exception:
+    pass

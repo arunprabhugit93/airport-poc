@@ -238,3 +238,31 @@ def test_airport_terminals_returns_breakdown() -> None:
     assert "T-South" in names
     for t in terminals:
         assert t["sla_status"] in ("OK", "WARNING", "BREACH")
+
+
+def test_capacity_utilization() -> None:
+    with _client() as client:
+        response = client.get("/airports/ATL/capacity")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["airport_code"] == "ATL"
+    assert 0 <= data["overall_utilization_pct"] <= 100
+    assert len(data["areas"]) > 0
+    for a in data["areas"]:
+        assert a["status"] in ("LOW", "MODERATE", "HIGH", "CRITICAL")
+        assert a["current_throughput"] >= 0
+
+
+def test_daily_scorecard() -> None:
+    with _client() as client:
+        response = client.get(
+            "/airports/ATL/scorecard", params={"target_date": "2021-11-24"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["airport_code"] == "ATL"
+    assert data["overall_score"] in ("EXCELLENT", "GOOD", "FAIR", "POOR")
+    assert data["total_pax"] > 0
+    assert len(data["areas"]) > 0

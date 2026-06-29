@@ -1573,3 +1573,197 @@ def airport_terminals(airport_code: str) -> AirportTerminalResponse:
         as_of=as_of,
         terminals=term_statuses,
     )
+
+
+# -----------------------------------------------------------------------
+# Capacity Utilization
+# -----------------------------------------------------------------------
+
+class CapacityMetric(BaseModel):
+    area_type: str
+    current_throughput: int
+    max_capacity: int
+    utilization_pct: float
+    headroom_pax: int
+    status: str
+
+
+class CapacityResponse(BaseModel):
+    airport_code: str
+    as_of: datetime
+    overall_utilization_pct: float
+    areas: list[CapacityMetric]
+
+
+@app.get("/airports/{airport_code}/capacity", response_model=CapacityResponse)
+def airport_capacity(airport_code: str) -> CapacityResponse:
+    """Current capacity utilization across all queue areas for an airport."""
+    _validate_airport(airport_code)
+
+    store = _store()
+    _ensure_ready(store)
+    as_of = _current_ts(store)
+    obs_date, obs_hour = _hour_parts(as_of)
+
+    areas: list[CapacityMetric] = []
+
+    with store.connect() as con:
+        for area in config.SECURITY_AREAS:
+            row = con.execute(
+                """
+                SELECT pax, lanes_open
+                FROM tsa_throughput
+                WHERE grain = 'checkpoint_hour'
+                  AND airport_code = ? AND area_type = ? AND obs_date = ? AND obs_hour = ?
+                """,
+                [airport_code, area, obs_date, obs_hour],
+            ).fetchone()
+
+            if row:
+                pax, lanes = int(row[0]), int(row[1])
+                mu = config.SERVICE_RATE_PER_LANE[area]
+                max_cap = int(lanes * mu * 60)
+                util = min(pax / max_cap * 100, 100.0) if max_cap > 0 else 0.0
+                headroom = max(max_cap - pax, 0)
+                status = "CRITICAL" if util > 90 else "HIGH" if util > 75 else "MODERATE" if util > 50 else "LOW"
+                areas.append(CapacityMetric(
+                    area_type=area, current_throughput=pax, max_capacity=max_cap,
+                    utilization_pct=round(util, 1), headroom_pax=headroom, status=status,
+                ))
+
+        for area in config.OPS_AREAS:
+            row = con.execute(
+                """
+                SELECT throughput, staff_on_duty
+                FROM airport_ops
+                WHERE airport_code = ? AND area_type = ?
+                  AND ts = ?
+                """,
+                [airport_code, area, as_of.replace(minute=0, second=0, microsecond=0)],
+            ).fetchone()
+
+            if row:
+                tput = int(row[0]) if row[0] else 0
+                staff = int(row[1]) if row[1] else 1
+                max_cap = staff * 120
+                util = min(tput / max_cap * 100, 100.0) if max_cap > 0 else 0.0
+                headroom = max(max_cap - tput, 0)
+                status = "CRITICAL" if util > 90 else "HIGH" if util > 75 else "MODERATE" if util > 50 else "LOW"
+                areas.append(CapacityMetric(
+                    area_type=area, current_throughput=tput, max_capacity=max_cap,
+                    utilization_pct=round(util, 1), headroom_pax=headroom, status=status,
+                ))
+
+    overall = sum(a.utilization_pct for a in areas) / len(areas) if areas else 0.0
+
+    return CapacityResponse(
+        airport_code=airport_code,
+        as_of=as_of,
+        overall_utilization_pct=round(overall, 1),
+        areas=areas,
+    )
+
+
+# -----------------------------------------------------------------------
+# Daily Summary / Scorecard
+# -----------------------------------------------------------------------
+
+class DailyScorecardArea(BaseModel):
+    area_type: str
+    avg_wait_min: float
+    peak_wait_min: float
+    total_pax: int
+    sla_compliance_pct: float
+
+
+class DailyScorecard(BaseModel):
+    airport_code: str
+    date: date
+    overall_score: str
+    total_pax: int
+    avg_wait_min: float
+    sla_compliance_pct: float
+    anomaly_count: int
+    areas: list[DailyScorecardArea]
+
+
+@app.get("/airports/{airport_code}/scorecard", response_model=DailyScorecard)
+def airport_scorecard(
+    airport_code: str,
+    target_date: date | None = None,
+) -> DailyScorecard:
+    """Daily performance scorecard for an airport."""
+    _validate_airport(airport_code)
+
+    store = _store()
+    _ensure_ready(store)
+    if target_date is None:
+        target_date = _current_ts(store).date()
+
+    with store.connect() as con:
+        hourly = con.execute(
+            """
+            SELECT area_type, pax, wait_min_est
+            FROM tsa_throughput
+            WHERE grain = 'checkpoint_hour'
+              AND airport_code = ? AND obs_date = ?
+            """,
+            [airport_code, target_date],
+        ).fetchdf()
+
+        daily_row = con.execute(
+            """
+            SELECT pax FROM tsa_throughput
+            WHERE grain = 'daily' AND airport_code = ? AND obs_date = ?
+            """,
+            [airport_code, target_date],
+        ).fetchone()
+
+        anomaly_count = con.execute(
+            """
+            SELECT COUNT(*) FROM anomaly_events
+            WHERE airport_code = ? AND CAST(detected_at AS DATE) = ?
+            """,
+            [airport_code, target_date],
+        ).fetchone()[0]
+
+    total_pax = int(daily_row[0]) if daily_row else 0
+
+    area_scores: list[DailyScorecardArea] = []
+    if not hourly.empty:
+        for area in hourly["area_type"].unique():
+            area_data = hourly[hourly["area_type"] == area]
+            waits = area_data["wait_min_est"].astype(float)
+            pax_sum = int(area_data["pax"].sum())
+            compliance = float((waits < config.BREACH_WAIT_MIN).mean() * 100)
+            area_scores.append(DailyScorecardArea(
+                area_type=area,
+                avg_wait_min=round(float(waits.mean()), 1),
+                peak_wait_min=round(float(waits.max()), 1),
+                total_pax=pax_sum,
+                sla_compliance_pct=round(compliance, 1),
+            ))
+
+    overall_waits = hourly["wait_min_est"].astype(float) if not hourly.empty else pd.Series([0.0])
+    avg_wait = float(overall_waits.mean())
+    sla_pct = float((overall_waits < config.BREACH_WAIT_MIN).mean() * 100)
+
+    if sla_pct >= 95:
+        score = "EXCELLENT"
+    elif sla_pct >= 80:
+        score = "GOOD"
+    elif sla_pct >= 60:
+        score = "FAIR"
+    else:
+        score = "POOR"
+
+    return DailyScorecard(
+        airport_code=airport_code,
+        date=target_date,
+        overall_score=score,
+        total_pax=total_pax,
+        avg_wait_min=round(avg_wait, 1),
+        sla_compliance_pct=round(sla_pct, 1),
+        anomaly_count=int(anomaly_count),
+        areas=area_scores,
+    )

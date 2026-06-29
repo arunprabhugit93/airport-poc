@@ -299,3 +299,45 @@ if trend:
     )
 else:
     st.info("No trend data available for this range.")
+
+# ---------------------------------------------------------------------------
+# 6. Daily Scorecard
+# ---------------------------------------------------------------------------
+st.subheader("Daily Scorecard")
+scorecard_ap = ap if ap != "ALL" else "ATL"
+try:
+    from api_client import get_scorecard
+    sc = get_scorecard(demo_now, scorecard_ap, str(date_from))
+    if sc:
+        score_colors = {"EXCELLENT": "#2ecc71", "GOOD": "#3498db", "FAIR": "#f39c12", "POOR": "#e74c3c"}
+        sc_color = score_colors.get(sc["overall_score"], "#95a5a6")
+        st.markdown(
+            f'<div style="border:3px solid {sc_color};border-radius:12px;'
+            f'padding:20px;text-align:center;margin-bottom:16px;">'
+            f'<div style="font-size:0.9em;color:#888;">{sc["airport_code"]} -- {sc["date"]}</div>'
+            f'<div style="font-size:2.5em;font-weight:800;color:{sc_color};">{sc["overall_score"]}</div>'
+            f'<div style="font-size:1em;margin-top:8px;">'
+            f'SLA Compliance: {sc["sla_compliance_pct"]:.0f}% | '
+            f'Avg Wait: {sc["avg_wait_min"]:.1f} min | '
+            f'Pax: {sc["total_pax"]:,} | '
+            f'Anomalies: {sc["anomaly_count"]}</div></div>',
+            unsafe_allow_html=True,
+        )
+        if sc.get("areas"):
+            sc_cols = st.columns(min(len(sc["areas"]), 4))
+            for i, area in enumerate(sc["areas"]):
+                with sc_cols[i % len(sc_cols)]:
+                    a_color = "#2ecc71" if area["sla_compliance_pct"] >= 90 else "#f39c12" if area["sla_compliance_pct"] >= 70 else "#e74c3c"
+                    st.markdown(
+                        f'<div style="border:1px solid {a_color};border-radius:6px;'
+                        f'padding:10px;text-align:center;margin-bottom:6px;">'
+                        f'<div style="font-size:0.8em;color:#aaa;">{area["area_type"]}</div>'
+                        f'<div style="font-size:1.4em;font-weight:700;color:{a_color};">'
+                        f'{area["sla_compliance_pct"]:.0f}%</div>'
+                        f'<div style="font-size:0.75em;">SLA compliance</div>'
+                        f'<div style="font-size:0.7em;color:#888;">'
+                        f'Peak: {area["peak_wait_min"]:.0f}m | {area["total_pax"]:,} pax</div></div>',
+                        unsafe_allow_html=True,
+                    )
+except Exception:
+    pass

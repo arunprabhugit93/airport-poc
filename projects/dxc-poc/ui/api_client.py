@@ -310,6 +310,25 @@ def get_airport_terminals(_demo_now: str, airport_code: str) -> dict | None:
         return None
 
 
+@st.cache_data(ttl=30)
+def get_capacity(_demo_now: str, airport_code: str) -> dict | None:
+    try:
+        return _get(f"/airports/{airport_code}/capacity")
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=30)
+def get_scorecard(_demo_now: str, airport_code: str, target_date: str | None = None) -> dict | None:
+    try:
+        params = {}
+        if target_date:
+            params["target_date"] = target_date
+        return _get(f"/airports/{airport_code}/scorecard", params or None)
+    except Exception:
+        return None
+
+
 def render_alert_banner(demo_now: str, airport: str | None = None) -> None:
     """Show prominent alert banners for high-severity anomalies."""
     high = check_high_anomalies(demo_now, airport if airport != "All" else None)
