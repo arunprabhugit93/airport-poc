@@ -266,3 +266,17 @@ def test_daily_scorecard() -> None:
     assert data["overall_score"] in ("EXCELLENT", "GOOD", "FAIR", "POOR")
     assert data["total_pax"] > 0
     assert len(data["areas"]) > 0
+
+
+def test_network_health() -> None:
+    with _client() as client:
+        response = client.get("/network/health")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert 0 <= data["network_score"] <= 100
+    assert data["network_grade"] in ("A", "B", "C", "D", "F")
+    assert len(data["airports"]) == 5
+    for a in data["airports"]:
+        assert a["airport_code"] in ("ATL", "DEN", "ORD", "LAX", "DFW")
+        assert a["grade"] in ("A", "B", "C", "D", "F")

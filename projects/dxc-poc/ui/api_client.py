@@ -311,6 +311,14 @@ def get_airport_terminals(_demo_now: str, airport_code: str) -> dict | None:
 
 
 @st.cache_data(ttl=30)
+def get_network_health(_demo_now: str) -> dict | None:
+    try:
+        return _get("/network/health")
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=30)
 def get_capacity(_demo_now: str, airport_code: str) -> dict | None:
     try:
         return _get(f"/airports/{airport_code}/capacity")

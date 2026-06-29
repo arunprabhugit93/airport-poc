@@ -1767,3 +1767,101 @@ def airport_scorecard(
         anomaly_count=int(anomaly_count),
         areas=area_scores,
     )
+
+
+# -----------------------------------------------------------------------
+# Network Health Score
+# -----------------------------------------------------------------------
+
+class AirportHealth(BaseModel):
+    airport_code: str
+    health_score: float
+    sla_compliance_pct: float
+    avg_wait_min: float
+    anomaly_count: int
+    grade: str
+
+
+class NetworkHealthResponse(BaseModel):
+    as_of: datetime
+    network_score: float
+    network_grade: str
+    airports: list[AirportHealth]
+
+
+@app.get("/network/health", response_model=NetworkHealthResponse)
+def network_health() -> NetworkHealthResponse:
+    """Overall network health score across all 5 airports."""
+    store = _store()
+    _ensure_ready(store)
+    as_of = _current_ts(store)
+
+    airport_scores: list[AirportHealth] = []
+
+    with store.connect() as con:
+        for ap in config.AIRPORT_CODES:
+            waits = con.execute(
+                """
+                SELECT wait_min_est FROM tsa_throughput
+                WHERE grain = 'checkpoint_hour' AND airport_code = ? AND obs_date = ?
+                """,
+                [ap, as_of.date()],
+            ).fetchdf()
+
+            anomaly_count = con.execute(
+                """
+                SELECT COUNT(*) FROM anomaly_events
+                WHERE airport_code = ? AND detected_at BETWEEN ? AND ?
+                """,
+                [ap, as_of - timedelta(hours=24), as_of],
+            ).fetchone()[0]
+
+            if waits.empty:
+                continue
+
+            w = waits["wait_min_est"].astype(float)
+            avg_wait = float(w.mean())
+            sla_pct = float((w < config.BREACH_WAIT_MIN).mean() * 100)
+            anomaly_penalty = min(int(anomaly_count) * 5, 25)
+            health = max(0, min(100, sla_pct - anomaly_penalty))
+
+            if health >= 90:
+                grade = "A"
+            elif health >= 75:
+                grade = "B"
+            elif health >= 60:
+                grade = "C"
+            elif health >= 40:
+                grade = "D"
+            else:
+                grade = "F"
+
+            airport_scores.append(AirportHealth(
+                airport_code=ap,
+                health_score=round(health, 1),
+                sla_compliance_pct=round(sla_pct, 1),
+                avg_wait_min=round(avg_wait, 1),
+                anomaly_count=int(anomaly_count),
+                grade=grade,
+            ))
+
+    network = sum(a.health_score for a in airport_scores) / len(airport_scores) if airport_scores else 0.0
+    if network >= 90:
+        net_grade = "A"
+    elif network >= 75:
+        net_grade = "B"
+    elif network >= 60:
+        net_grade = "C"
+    elif network >= 40:
+        net_grade = "D"
+    else:
+        net_grade = "F"
+
+    airport_scores.sort(key=lambda a: a.health_score, reverse=True)
+
+    return NetworkHealthResponse(
+        as_of=as_of,
+        network_score=round(network, 1),
+        network_grade=net_grade,
+        airports=airport_scores,
+    )

@@ -23,6 +23,32 @@ st.set_page_config(page_title="Operations Command Center", layout="wide", page_i
 airport, demo_now = render_sidebar()
 
 st.title("Airport Operations Command Center")
+
+# Network health grade
+try:
+    from api_client import get_network_health
+    nh = get_network_health(demo_now)
+    if nh:
+        grade_colors = {"A": "#2ecc71", "B": "#3498db", "C": "#f39c12", "D": "#e67e22", "F": "#e74c3c"}
+        gc = grade_colors.get(nh["network_grade"], "#95a5a6")
+        ap_grades = " | ".join(
+            f'{a["airport_code"]}: <span style="color:{grade_colors.get(a["grade"],"#aaa")};'
+            f'font-weight:700;">{a["grade"]}</span>'
+            for a in nh["airports"]
+        )
+        st.markdown(
+            f'<div style="display:flex;align-items:center;gap:20px;margin-bottom:16px;">'
+            f'<div style="background:{gc};color:#fff;font-size:2.5em;font-weight:900;'
+            f'width:80px;height:80px;border-radius:50%;display:flex;align-items:center;'
+            f'justify-content:center;">{nh["network_grade"]}</div>'
+            f'<div><div style="font-size:1.2em;font-weight:600;">Network Health: '
+            f'{nh["network_score"]:.0f}/100</div>'
+            f'<div style="font-size:0.9em;color:#aaa;">{ap_grades}</div></div></div>',
+            unsafe_allow_html=True,
+        )
+except Exception:
+    pass
+
 render_alert_banner(demo_now, airport)
 
 # ---------------------------------------------------------------------------
