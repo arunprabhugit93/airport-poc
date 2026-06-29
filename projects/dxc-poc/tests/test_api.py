@@ -105,3 +105,103 @@ def test_staffing_simulation_and_kpis() -> None:
     kpi_payload = kpis.json()
     assert kpi_payload["trend"]
     assert kpi_payload["kpis"]["total_pax"] > 0
+
+
+def test_passenger_journey_returns_all_stages() -> None:
+    with _client() as client:
+        response = client.get("/passenger-journey", params={"airport": "ATL"})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["airport_code"] == "ATL"
+    stages = data["stages"]
+    stage_names = [s["stage"] for s in stages]
+    assert "CHECKIN" in stage_names
+    assert "SECURITY_TSA" in stage_names
+    assert "IMMIGRATION" in stage_names
+    assert "GATE" in stage_names
+    assert data["total_journey_min"] > 0
+    assert data["bottleneck"] in stage_names
+
+
+def test_all_areas_returns_security_and_ops() -> None:
+    with _client() as client:
+        response = client.get("/queues/all-areas", params={"airport": "ATL"})
+
+    assert response.status_code == 200
+    queues = response.json()["queues"]
+    area_types = {q["area_type"] for q in queues}
+    assert "SECURITY_TSA" in area_types
+    assert "SECURITY_PRECHECK" in area_types
+    for q in queues:
+        assert "wait_min" in q
+        assert "sla_status" in q
+
+
+def test_recommendations_returns_prioritised_actions() -> None:
+    with _client() as client:
+        response = client.get("/operations/recommendations")
+
+    assert response.status_code == 200
+    recs = response.json()["recommendations"]
+    assert len(recs) > 0
+    for r in recs:
+        assert r["priority"] in ("HIGH", "MEDIUM", "LOW")
+        assert r["airport_code"] in ("ATL", "DEN", "ORD", "LAX", "DFW")
+        assert "action" in r
+        assert "reason" in r
+
+
+def test_heatmap_returns_cells() -> None:
+    with _client() as client:
+        response = client.get(
+            "/queues/heatmap", params={"airport": "ATL", "area": "SECURITY_TSA"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["airport_code"] == "ATL"
+    assert data["area_type"] == "SECURITY_TSA"
+    assert len(data["cells"]) > 0
+    cell = data["cells"][0]
+    assert "day_of_week" in cell
+    assert "hour" in cell
+    assert "avg_wait_min" in cell
+
+
+def test_airports_returns_all_five() -> None:
+    with _client() as client:
+        response = client.get("/airports")
+
+    assert response.status_code == 200
+    airports = response.json()["airports"]
+    codes = {a["airport_code"] for a in airports}
+    assert codes == {"ATL", "DEN", "ORD", "LAX", "DFW"}
+    for a in airports:
+        assert "lat" in a
+        assert "lon" in a
+        assert "sla_status" in a
+
+
+def test_anomalies_recent_returns_events() -> None:
+    with _client() as client:
+        response = client.get("/anomalies/recent", params={"hours": 720})
+
+    assert response.status_code == 200
+    events = response.json()["events"]
+    assert len(events) > 0
+    for e in events:
+        assert e["severity"] in ("LOW", "MEDIUM", "HIGH")
+        assert e["anomaly_type"] in ("SPIKE", "DROP", "CROSS_AIRPORT", "SEASONAL")
+
+
+def test_models_returns_three() -> None:
+    with _client() as client:
+        response = client.get("/models")
+
+    assert response.status_code == 200
+    models = response.json()["models"]
+    names = [m["name"] for m in models]
+    assert names == ["prophet", "nbeats", "lstm"]
+    default = [m for m in models if m["default"]]
+    assert len(default) == 1

@@ -29,9 +29,10 @@ AREA_TYPES: list[str] = [
     "CHECKIN",
     "GATE",
     "BAGGAGE",
+    "IMMIGRATION",
 ]
 SECURITY_AREAS: list[str] = ["SECURITY_TSA", "SECURITY_PRECHECK"]
-OPS_AREAS: list[str] = ["CHECKIN", "GATE", "BAGGAGE"]
+OPS_AREAS: list[str] = ["CHECKIN", "GATE", "BAGGAGE", "IMMIGRATION"]
 
 SLA_STATUSES: list[str] = ["OK", "WARNING", "BREACH"]
 SEVERITIES: list[str] = ["LOW", "MEDIUM", "HIGH"]
@@ -48,30 +49,35 @@ AIRPORTS: dict[str, dict] = {
         "lat": 33.6407,
         "lon": -84.4277,
         "lane_caps": {"SECURITY_TSA": 12, "SECURITY_PRECHECK": 4},
+        "terminals": ["T-North", "T-South"],
     },
     "DEN": {
         "name": "Denver International",
         "lat": 39.8561,
         "lon": -104.6737,
         "lane_caps": {"SECURITY_TSA": 12, "SECURITY_PRECHECK": 4},
+        "terminals": ["Jeppesen", "Concourse A", "Concourse B", "Concourse C"],
     },
     "ORD": {
         "name": "Chicago O'Hare",
         "lat": 41.9742,
         "lon": -87.9073,
         "lane_caps": {"SECURITY_TSA": 12, "SECURITY_PRECHECK": 4},
+        "terminals": ["Terminal 1", "Terminal 2", "Terminal 3", "Terminal 5"],
     },
     "LAX": {
         "name": "Los Angeles International",
         "lat": 33.9416,
         "lon": -118.4085,
         "lane_caps": {"SECURITY_TSA": 12, "SECURITY_PRECHECK": 4},
+        "terminals": ["TBIT", "T1", "T2", "T3", "T4", "T5", "T6", "T7", "T8"],
     },
     "DFW": {
         "name": "Dallas/Fort Worth",
         "lat": 32.8998,
         "lon": -97.0403,
         "lane_caps": {"SECURITY_TSA": 12, "SECURITY_PRECHECK": 4},
+        "terminals": ["Terminal A", "Terminal B", "Terminal C", "Terminal D", "Terminal E"],
     },
 }
 
@@ -162,7 +168,7 @@ TSA_START_DATE: str = "2020-02-15"
 TSA_END_DATE: str = "2022-10-15"
 
 # Ops (Kaggle stand-in) window.
-OPS_START_DATE: str = "2022-01-01"
+OPS_START_DATE: str = "2020-02-15"
 OPS_END_DATE: str = "2022-10-15"
 OPS_OPEN_HOUR: int = 5
 OPS_CLOSE_HOUR: int = 23

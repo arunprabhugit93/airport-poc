@@ -194,6 +194,62 @@ class ModelsResponse(BaseModel):
     models: list[ModelDescriptor]
 
 
+class AllAreaQueue(BaseModel):
+    airport_code: str
+    area_type: str
+    queue_length: int
+    wait_min: float
+    staff_on_duty: int
+    sla_status: str
+
+
+class AllAreaQueuesResponse(BaseModel):
+    as_of: datetime
+    queues: list[AllAreaQueue]
+
+
+class JourneyStage(BaseModel):
+    stage: str
+    avg_wait_min: float
+    queue_length: int
+    status: str
+
+
+class PassengerJourneyResponse(BaseModel):
+    airport_code: str
+    as_of: datetime
+    stages: list[JourneyStage]
+    total_journey_min: float
+    bottleneck: str
+
+
+class Recommendation(BaseModel):
+    priority: str
+    airport_code: str
+    area: str
+    action: str
+    reason: str
+    impact: str
+
+
+class RecommendationsResponse(BaseModel):
+    as_of: datetime
+    recommendations: list[Recommendation]
+
+
+class HeatmapCell(BaseModel):
+    day_of_week: int
+    hour: int
+    avg_wait_min: float
+    avg_pax: float
+
+
+class HeatmapResponse(BaseModel):
+    airport_code: str
+    area_type: str
+    cells: list[HeatmapCell]
+
+
 class ClockResponse(BaseModel):
     demo_now: datetime
     min: datetime
@@ -597,6 +653,338 @@ def queues_current(airport: str | None = None) -> CurrentQueuesResponse:
         ]
 
     return CurrentQueuesResponse(as_of=as_of, queues=queues)
+
+
+@app.get("/queues/all-areas", response_model=AllAreaQueuesResponse)
+def queues_all_areas(airport: str | None = None) -> AllAreaQueuesResponse:
+    """Current queue state for ALL area types (security + ops areas)."""
+    if airport is not None:
+        _validate_airport(airport)
+
+    store = _store()
+    _ensure_ready(store)
+    as_of = _current_ts(store)
+
+    queues: list[AllAreaQueue] = []
+
+    with store.connect() as con:
+        # Security areas from tsa_throughput
+        security = _current_security_rows(con, as_of, airport)
+        for _, row in security.iterrows():
+            queues.append(
+                AllAreaQueue(
+                    airport_code=row["airport_code"],
+                    area_type=row["area_type"],
+                    queue_length=int(row["pax"]),
+                    wait_min=round(float(row["wait_min_est"]), 1),
+                    staff_on_duty=int(row["lanes_open"]) * config.OFFICERS_PER_LANE,
+                    sla_status=_sla_status(float(row["wait_min_est"])),
+                )
+            )
+
+        # Ops areas from airport_ops (CHECKIN, GATE, BAGGAGE, IMMIGRATION)
+        obs_date, obs_hour = _hour_parts(as_of)
+        ops_sql = """
+            SELECT airport_code, area_type, queue_length, wait_min, staff_on_duty
+            FROM airport_ops
+            WHERE CAST(ts AS DATE) = ?
+              AND EXTRACT(HOUR FROM ts) = ?
+        """
+        ops_params: list[object] = [obs_date, obs_hour]
+        if airport:
+            ops_sql += " AND airport_code = ?"
+            ops_params.append(airport)
+        ops_sql += " ORDER BY airport_code, area_type"
+        ops_rows = con.execute(ops_sql, ops_params).fetchall()
+
+        for row in ops_rows:
+            queues.append(
+                AllAreaQueue(
+                    airport_code=row[0],
+                    area_type=row[1],
+                    queue_length=int(row[2]) if row[2] is not None else 0,
+                    wait_min=round(float(row[3]), 1) if row[3] is not None else 0.0,
+                    staff_on_duty=int(row[4]) if row[4] is not None else 0,
+                    sla_status=_sla_status(float(row[3])) if row[3] is not None else "OK",
+                )
+            )
+
+    return AllAreaQueuesResponse(as_of=as_of, queues=queues)
+
+
+@app.get("/passenger-journey", response_model=PassengerJourneyResponse)
+def passenger_journey(airport: str) -> PassengerJourneyResponse:
+    """Estimated time through each stage for a passenger at a given airport."""
+    _validate_airport(airport)
+
+    store = _store()
+    _ensure_ready(store)
+    as_of = _current_ts(store)
+
+    stages: list[JourneyStage] = []
+    stage_order = ["CHECKIN", "SECURITY_TSA", "IMMIGRATION", "GATE", "BAGGAGE"]
+
+    with store.connect() as con:
+        obs_date, obs_hour = _hour_parts(as_of)
+
+        # Security data
+        security = _current_security_rows(con, as_of, airport)
+        security_lookup: dict[str, tuple[float, int]] = {}
+        for _, row in security.iterrows():
+            security_lookup[row["area_type"]] = (
+                float(row["wait_min_est"]),
+                int(row["pax"]),
+            )
+
+        # Ops data
+        ops_rows = con.execute(
+            """
+            SELECT area_type, wait_min, queue_length
+            FROM airport_ops
+            WHERE airport_code = ?
+              AND CAST(ts AS DATE) = ?
+              AND EXTRACT(HOUR FROM ts) = ?
+            """,
+            [airport, obs_date, obs_hour],
+        ).fetchall()
+        ops_lookup: dict[str, tuple[float, int]] = {
+            row[0]: (float(row[1]) if row[1] else 0.0, int(row[2]) if row[2] else 0)
+            for row in ops_rows
+        }
+
+    for stage_name in stage_order:
+        if stage_name in config.SECURITY_AREAS:
+            if stage_name in security_lookup:
+                wait, queue = security_lookup[stage_name]
+            else:
+                wait, queue = 0.0, 0
+        else:
+            if stage_name in ops_lookup:
+                wait, queue = ops_lookup[stage_name]
+            else:
+                wait, queue = 0.0, 0
+        stages.append(
+            JourneyStage(
+                stage=stage_name,
+                avg_wait_min=round(wait, 1),
+                queue_length=queue,
+                status=_sla_status(wait),
+            )
+        )
+
+    total_journey = sum(s.avg_wait_min for s in stages)
+    bottleneck = max(stages, key=lambda s: s.avg_wait_min).stage if stages else "UNKNOWN"
+
+    return PassengerJourneyResponse(
+        airport_code=airport,
+        as_of=as_of,
+        stages=stages,
+        total_journey_min=round(total_journey, 1),
+        bottleneck=bottleneck,
+    )
+
+
+@app.get("/operations/recommendations", response_model=RecommendationsResponse)
+def operations_recommendations(airport: str | None = None) -> RecommendationsResponse:
+    """Actionable ops recommendations based on current queue state."""
+    if airport is not None:
+        _validate_airport(airport)
+
+    store = _store()
+    _ensure_ready(store)
+    as_of = _current_ts(store)
+
+    recommendations: list[Recommendation] = []
+
+    with store.connect() as con:
+        obs_date, obs_hour = _hour_parts(as_of)
+
+        # Check security areas for breaches
+        security = _current_security_rows(con, as_of, airport)
+        for _, row in security.iterrows():
+            code = row["airport_code"]
+            area = row["area_type"]
+            wait = float(row["wait_min_est"])
+            pax = int(row["pax"])
+            lanes = int(row["lanes_open"])
+
+            if wait >= config.BREACH_WAIT_MIN:
+                service_rate = config.SERVICE_RATE_PER_LANE.get(area, 3.0)
+                # Estimate lanes needed to get below SLA
+                needed_lanes = lanes
+                while needed_lanes < 20:
+                    needed_lanes += 1
+                    est_wait = mm_c_wait(pax / 60.0, service_rate, needed_lanes)
+                    if est_wait < config.SLA_TARGET_MIN:
+                        break
+                extra = needed_lanes - lanes
+                est_reduced = mm_c_wait(pax / 60.0, service_rate, needed_lanes)
+                recommendations.append(
+                    Recommendation(
+                        priority="HIGH",
+                        airport_code=code,
+                        area=area,
+                        action=f"Open {extra} additional lane{'s' if extra != 1 else ''}",
+                        reason=f"Wait time {wait:.1f} min exceeds SLA ({config.SLA_TARGET_MIN:.0f} min), {pax} pax/hr with only {lanes} lanes",
+                        impact=f"Estimated wait reduction to {est_reduced:.1f} min",
+                    )
+                )
+            elif wait >= config.WARN_WAIT_MIN:
+                recommendations.append(
+                    Recommendation(
+                        priority="MEDIUM",
+                        airport_code=code,
+                        area=area,
+                        action="Prepare additional lane for activation",
+                        reason=f"Wait time {wait:.1f} min approaching SLA threshold ({config.SLA_TARGET_MIN:.0f} min)",
+                        impact="Prevent potential SLA breach in next 15-30 min",
+                    )
+                )
+
+        # Check ops areas for high waits
+        ops_sql = """
+            SELECT airport_code, area_type, queue_length, wait_min, staff_on_duty
+            FROM airport_ops
+            WHERE CAST(ts AS DATE) = ?
+              AND EXTRACT(HOUR FROM ts) = ?
+        """
+        ops_params: list[object] = [obs_date, obs_hour]
+        if airport:
+            ops_sql += " AND airport_code = ?"
+            ops_params.append(airport)
+        ops_rows = con.execute(ops_sql, ops_params).fetchall()
+
+        for row in ops_rows:
+            code, area, queue_len, wait, staff = row[0], row[1], row[2], row[3], row[4]
+            if wait is None:
+                continue
+            wait = float(wait)
+            if wait >= config.BREACH_WAIT_MIN:
+                recommendations.append(
+                    Recommendation(
+                        priority="HIGH",
+                        airport_code=code,
+                        area=area,
+                        action=f"Add staff to {area.lower().replace('_', ' ')} area",
+                        reason=f"Wait time {wait:.1f} min exceeds SLA, queue length {queue_len}, staff on duty {staff}",
+                        impact=f"Reduce queue from {queue_len} and bring wait below {config.SLA_TARGET_MIN:.0f} min",
+                    )
+                )
+            elif wait >= config.WARN_WAIT_MIN:
+                recommendations.append(
+                    Recommendation(
+                        priority="MEDIUM",
+                        airport_code=code,
+                        area=area,
+                        action=f"Monitor {area.lower().replace('_', ' ')} staffing levels",
+                        reason=f"Wait time {wait:.1f} min approaching SLA threshold, {staff} staff on duty",
+                        impact="Prevent potential SLA breach",
+                    )
+                )
+
+        # Check for recent anomalies
+        anomalies_sql = """
+            SELECT airport_code, area_type, anomaly_type, severity, description
+            FROM anomaly_events
+            WHERE detected_at BETWEEN ? AND ?
+        """
+        anomaly_params: list[object] = [as_of - timedelta(hours=6), as_of]
+        if airport:
+            anomalies_sql += " AND airport_code = ?"
+            anomaly_params.append(airport)
+        anomalies_sql += " AND severity IN ('HIGH', 'MEDIUM') ORDER BY detected_at DESC LIMIT 10"
+        anomaly_rows = con.execute(anomalies_sql, anomaly_params).fetchall()
+
+        for row in anomaly_rows:
+            a_code, a_area, a_type, a_severity, a_desc = row
+            if a_code == "ALL":
+                continue
+            recommendations.append(
+                Recommendation(
+                    priority=a_severity,
+                    airport_code=a_code,
+                    area=a_area or "ALL",
+                    action=f"Investigate {a_type.lower()} anomaly",
+                    reason=a_desc or f"{a_type} detected at {a_area or 'system-wide'}",
+                    impact="Early intervention prevents cascading delays",
+                )
+            )
+
+    # Sort: HIGH first, then MEDIUM, then LOW
+    priority_order = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
+    recommendations.sort(key=lambda r: priority_order.get(r.priority, 3))
+
+    return RecommendationsResponse(as_of=as_of, recommendations=recommendations)
+
+
+@app.get("/queues/heatmap", response_model=HeatmapResponse)
+def queues_heatmap(
+    airport: str,
+    area: str = "SECURITY_TSA",
+    days: int = Query(default=30, ge=1, le=365),
+) -> HeatmapResponse:
+    """Hourly pattern data for heatmap visualization, aggregated over trailing N days."""
+    _validate_airport(airport)
+    _validate_area(area)
+
+    store = _store()
+    _ensure_ready(store)
+    as_of = _current_ts(store)
+    start_date = (as_of - timedelta(days=days)).date()
+    end_date = as_of.date()
+
+    cells: list[HeatmapCell] = []
+
+    with store.connect() as con:
+        if area in config.SECURITY_AREAS:
+            rows = con.execute(
+                """
+                SELECT ISODOW(obs_date) - 1 AS dow,
+                       obs_hour,
+                       AVG(wait_min_est) AS avg_wait,
+                       AVG(pax) AS avg_pax
+                FROM tsa_throughput
+                WHERE grain = 'checkpoint_hour'
+                  AND airport_code = ?
+                  AND area_type = ?
+                  AND obs_date BETWEEN ? AND ?
+                GROUP BY ISODOW(obs_date) - 1, obs_hour
+                ORDER BY dow, obs_hour
+                """,
+                [airport, area, start_date, end_date],
+            ).fetchall()
+        else:
+            rows = con.execute(
+                """
+                SELECT ISODOW(CAST(ts AS DATE)) - 1 AS dow,
+                       EXTRACT(HOUR FROM ts)::INTEGER AS hr,
+                       AVG(wait_min) AS avg_wait,
+                       AVG(queue_length) AS avg_pax
+                FROM airport_ops
+                WHERE airport_code = ?
+                  AND area_type = ?
+                  AND CAST(ts AS DATE) BETWEEN ? AND ?
+                GROUP BY ISODOW(CAST(ts AS DATE)) - 1, EXTRACT(HOUR FROM ts)::INTEGER
+                ORDER BY dow, hr
+                """,
+                [airport, area, start_date, end_date],
+            ).fetchall()
+
+    for row in rows:
+        cells.append(
+            HeatmapCell(
+                day_of_week=int(row[0]),
+                hour=int(row[1]),
+                avg_wait_min=round(float(row[2]), 1) if row[2] is not None else 0.0,
+                avg_pax=round(float(row[3]), 1) if row[3] is not None else 0.0,
+            )
+        )
+
+    return HeatmapResponse(
+        airport_code=airport,
+        area_type=area,
+        cells=cells,
+    )
 
 
 @app.get("/queues/forecast", response_model=ForecastResponse)

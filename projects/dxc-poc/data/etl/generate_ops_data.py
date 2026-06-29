@@ -34,6 +34,7 @@ _AREA_PROFILE: dict[str, dict] = {
     "CHECKIN": {"peak_queue": 120, "base_wait": 12.0, "tput_scale": 90, "staff": (6, 18)},
     "GATE": {"peak_queue": 80, "base_wait": 6.0, "tput_scale": 70, "staff": (2, 8)},
     "BAGGAGE": {"peak_queue": 60, "base_wait": 8.0, "tput_scale": 60, "staff": (3, 10)},
+    "IMMIGRATION": {"peak_queue": 100, "base_wait": 15.0, "tput_scale": 50, "staff": (4, 12)},
 }
 
 # Weekday multipliers (Mon=0..Sun=6), mirrors the TSA weekly shape.

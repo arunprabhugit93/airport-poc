@@ -28,9 +28,11 @@ services:
   dashboard:
     build:
       context: .
-      dockerfile: Dockerfile.ui    # ui-engineer creates this
+      dockerfile: Dockerfile.ui
     ports:
       - "8501:8501"
+    environment:
+      - API_BASE=http://api:8000
     depends_on:
       api:
         condition: service_healthy
