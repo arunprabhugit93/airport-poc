@@ -1,66 +1,61 @@
 # Agentic Delivery Skeleton
 
 > **Cold-start rule:** Read ONLY `progress/handoff.md`. It tells you exactly
-> what to do and which files to read. Do NOT read the full decision log,
-> research, or requirements unless the handoff says to.
+> what to do, which repos to clone, and which files to read.
 
 ---
 
-## Quick context (skim, don't study)
+## What this is
 
-7 specialist AI agents (researcher → solution-architect → data-engineer →
-backend-engineer + ui-engineer → test-engineer → doc-writer) deliver a project.
-Agents are declarative Markdown in `agents/`. No orchestration code.
+A reusable AI delivery framework. 7 specialist agents deliver projects:
+researcher → solution-architect → data-engineer → backend-engineer +
+ui-engineer → test-engineer → doc-writer. Agent definitions in `agents/`.
 
-**Active project:** DXC Airport Queue Management POC in `projects/dxc-poc/`.
+This skeleton provides the **process**. The **code** lives in separate repos.
 
 ---
 
-## Continuity protocol (token-efficient)
+## Active platform: DXC Airport Ops
 
-### Starting a session (any account, any device)
-1. Read `progress/handoff.md` — it has your task, relevant files, and state.
-2. Read ONLY the files the handoff tells you to read.
-3. Start working. Do not re-derive context that's already in the handoff.
+| Repo | What | URL |
+|------|------|-----|
+| `airport-poc` (this) | Process, agents, continuity, requirements, research, decisions | https://github.com/arunprabhugit93/airport-poc |
+| `dxc-airport-queue-mgmt` | Queue Management module (backend + Next.js frontend + data) | https://github.com/arunprabhugit93/dxc-airport-queue-mgmt |
+
+### Platform modules (in `dxc-airport-queue-mgmt`)
+- **Queue Management** — BUILT (19 API endpoints, 8 Next.js pages)
+- **Flight Operations** — NOT STARTED (placeholder in nav)
+- **Baggage Handling** — NOT STARTED (placeholder in nav)
+- **Comms** — NOT STARTED (placeholder in nav)
+- **Maintenance** — NOT STARTED (placeholder in nav)
+- **Retail** — NOT STARTED (placeholder in nav)
+
+---
+
+## Starting a new module
+
+1. Read `progress/handoff.md` for current state
+2. Write requirements for the module in `requirements/`
+3. Run the researcher agent → produces domain briefing
+4. Run solution-architect → freezes architecture
+5. Build in the app repo under the appropriate service/pages directory
+6. Update `progress/handoff.md` when done
+
+---
+
+## Continuity protocol
+
+### Starting a session
+1. Read `progress/handoff.md` — it has your task and repo links
+2. Clone/pull the app repo if working on code
+3. The app repo has its own `CLAUDE.md` + `CHECKPOINT.md`
 
 ### Ending a session
-1. Update `progress/handoff.md` with exactly where you stopped:
-   - Files created/modified (paths)
-   - What works, what doesn't
-   - Exact next step (not a menu — one clear action)
-   - Which contract files the next session needs
-2. Commit and push.
+1. Update `progress/handoff.md` in this repo
+2. Update `CHECKPOINT.md` in the app repo
+3. Commit and push both
 
 ### Rules
-- `progress/handoff.md` is the **only** file every session reads. Keep it under
-  100 lines. It replaces the old "read 5 files in order" chain.
-- `progress/status.md` is the **session log** (append-only history). Not read
-  at cold start unless you need history.
-- Frozen contracts in `decisions/` and `projects/dxc-poc/architecture/` are
-  read **only when building against them** — not for orientation.
-- If chat and a committed file disagree, the file wins.
-
----
-
-## Repo map
-
-```
-.
-├── CLAUDE.md                 ← you are here (skim only)
-├── SETUP.md                  ← per-device git workflow
-├── progress/
-│   ├── handoff.md            ← ** READ THIS FIRST ** (cold-start briefing)
-│   └── status.md             ← session log (append-only, not read at start)
-├── decisions/
-│   └── decision-log.md       ← frozen architecture (read only when building)
-├── projects/dxc-poc/         ← all project code + contracts
-│   ├── architecture/         ← data-contract.md, api-contract.md, ui-spec.md
-│   ├── data/                 ← ETL + DuckDB
-│   ├── backend/              ← FastAPI + models
-│   ├── ui/                   ← Streamlit dashboard
-│   ├── tests/                ← pytest
-│   └── docs/                 ← demo script, README
-├── requirements/             ← project requirements
-├── research/                 ← domain briefing
-└── agents/                   ← 7 specialist agent definitions
-```
+- `progress/handoff.md` is the only file read at cold start
+- The app repo is self-contained — give it to any AI tool and it works
+- Contracts in `decisions/` and `projects/dxc-poc/architecture/` are reference only
