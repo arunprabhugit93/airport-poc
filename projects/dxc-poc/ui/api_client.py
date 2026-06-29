@@ -291,6 +291,25 @@ def render_sidebar() -> tuple[str, str]:
     return airport, demo_now
 
 
+@st.cache_data(ttl=30)
+def get_shift_handoff(_demo_now: str, airport: str | None = None, shift_hours: int = 8) -> dict | None:
+    try:
+        params: dict = {"shift_hours": shift_hours}
+        if airport and airport not in ("All", "ALL"):
+            params["airport"] = airport
+        return _get("/operations/shift-handoff", params)
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=30)
+def get_airport_terminals(_demo_now: str, airport_code: str) -> dict | None:
+    try:
+        return _get(f"/airports/{airport_code}/terminals")
+    except Exception:
+        return None
+
+
 def render_alert_banner(demo_now: str, airport: str | None = None) -> None:
     """Show prominent alert banners for high-severity anomalies."""
     high = check_high_anomalies(demo_now, airport if airport != "All" else None)

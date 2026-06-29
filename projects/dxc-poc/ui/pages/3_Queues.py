@@ -199,3 +199,33 @@ try:
         st.info("No current queue data available.")
 except Exception:
     st.info("Could not load current queue data.")
+
+# ---------------------------------------------------------------------------
+# 4. Terminal Breakdown
+# ---------------------------------------------------------------------------
+st.subheader(f"Terminal Breakdown -- {selected}")
+try:
+    from api_client import get_airport_terminals
+    term_data = get_airport_terminals(demo_now, selected)
+    if term_data and term_data.get("terminals"):
+        terminals = term_data["terminals"]
+        cols = st.columns(min(len(terminals), 5))
+        for i, t in enumerate(terminals):
+            col = cols[i % len(cols)]
+            colour = SLA_COLOUR.get(t["sla_status"], "#95a5a6")
+            with col:
+                st.markdown(
+                    f'<div style="border:2px solid {colour};border-radius:8px;'
+                    f'padding:12px;text-align:center;margin-bottom:8px;">'
+                    f'<div style="font-size:0.85em;color:#aaa;">{t["terminal"]}</div>'
+                    f'<div style="font-size:1.8em;font-weight:700;color:{colour};">'
+                    f'{t["estimated_wait_min"]:.0f}</div>'
+                    f'<div style="font-size:0.8em;">min wait</div>'
+                    f'<div style="font-size:0.75em;color:#888;">'
+                    f'{t["estimated_pax"]:,} pax</div></div>',
+                    unsafe_allow_html=True,
+                )
+    else:
+        st.info("Terminal data not available.")
+except Exception:
+    pass

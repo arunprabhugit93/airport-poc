@@ -304,3 +304,30 @@ try:
         st.info("No forecast data available.")
 except Exception:
     st.info("Forecast data not available for this time window.")
+
+# ---------------------------------------------------------------------------
+# Shift Handoff Summary
+# ---------------------------------------------------------------------------
+st.subheader("Shift Handoff Summary")
+try:
+    from api_client import get_shift_handoff
+    handoff_ap = forecast_airport if airport != "All" else None
+    handoff_data = get_shift_handoff(demo_now, airport=handoff_ap)
+    if handoff_data and handoff_data.get("handoffs"):
+        for h in handoff_data["handoffs"][:3]:
+            sev_color = "#e74c3c" if h["sla_breaches"] > 0 else "#2ecc71"
+            st.markdown(
+                f'<div style="border-left:4px solid {sev_color};padding:12px 16px;'
+                f'margin-bottom:10px;border-radius:4px;background:rgba(255,255,255,0.03);">'
+                f'<strong>{h["airport_code"]}</strong> | '
+                f'{h["shift_start"][:16]} to {h["shift_end"][:16]}<br/>'
+                f'{h["summary"]}<br/>'
+                f'<span style="color:#888;font-size:0.9em;">'
+                f'Pax: {h["total_pax"]:,} | Anomalies: {h["anomalies_during_shift"]} | '
+                f'Outlook: {h["next_shift_outlook"]}</span></div>',
+                unsafe_allow_html=True,
+            )
+    else:
+        st.info("Shift handoff data not available.")
+except Exception:
+    pass

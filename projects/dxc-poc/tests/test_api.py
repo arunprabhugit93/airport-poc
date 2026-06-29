@@ -205,3 +205,36 @@ def test_models_returns_three() -> None:
     assert names == ["prophet", "nbeats", "lstm"]
     default = [m for m in models if m["default"]]
     assert len(default) == 1
+
+
+def test_shift_handoff_returns_briefing() -> None:
+    with _client() as client:
+        response = client.get(
+            "/operations/shift-handoff", params={"airport": "ATL", "shift_hours": 8},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    handoffs = data["handoffs"]
+    assert len(handoffs) >= 1
+    h = handoffs[0]
+    assert h["airport_code"] == "ATL"
+    assert h["total_pax"] > 0
+    assert "summary" in h
+    assert "next_shift_outlook" in h
+
+
+def test_airport_terminals_returns_breakdown() -> None:
+    with _client() as client:
+        response = client.get("/airports/ATL/terminals")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["airport_code"] == "ATL"
+    terminals = data["terminals"]
+    assert len(terminals) == 2
+    names = {t["terminal"] for t in terminals}
+    assert "T-North" in names
+    assert "T-South" in names
+    for t in terminals:
+        assert t["sla_status"] in ("OK", "WARNING", "BREACH")

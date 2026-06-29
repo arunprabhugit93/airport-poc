@@ -1380,3 +1380,196 @@ def update_clock(payload: ClockUpdateRequest) -> ClockResponse:
         min=store.min_demo_now,
         max=store.max_demo_now,
     )
+
+
+# -----------------------------------------------------------------------
+# Shift Handoff Summary
+# -----------------------------------------------------------------------
+
+class ShiftEvent(BaseModel):
+    time: datetime
+    event_type: str
+    description: str
+    severity: str | None = None
+
+
+class ShiftHandoff(BaseModel):
+    airport_code: str
+    shift_start: datetime
+    shift_end: datetime
+    summary: str
+    peak_wait_min: float
+    avg_wait_min: float
+    total_pax: int
+    anomalies_during_shift: int
+    sla_breaches: int
+    key_events: list[ShiftEvent]
+    next_shift_outlook: str
+
+
+class ShiftHandoffResponse(BaseModel):
+    as_of: datetime
+    handoffs: list[ShiftHandoff]
+
+
+@app.get("/operations/shift-handoff", response_model=ShiftHandoffResponse)
+def shift_handoff(
+    airport: str | None = None,
+    shift_hours: int = Query(default=8, ge=4, le=12),
+) -> ShiftHandoffResponse:
+    """Auto-generated shift handoff briefing: what happened, what's unresolved, what's forecast."""
+    if airport is not None:
+        _validate_airport(airport)
+
+    store = _store()
+    _ensure_ready(store)
+    as_of = _current_ts(store)
+    shift_start = as_of - timedelta(hours=shift_hours)
+    airports_to_check = [airport] if airport else config.AIRPORT_CODES
+
+    handoffs: list[ShiftHandoff] = []
+
+    with store.connect() as con:
+        for ap in airports_to_check:
+            hours_data = con.execute(
+                """
+                SELECT obs_hour, pax, wait_min_est
+                FROM tsa_throughput
+                WHERE grain = 'checkpoint_hour'
+                  AND airport_code = ?
+                  AND area_type = 'SECURITY_TSA'
+                  AND (obs_date + INTERVAL (obs_hour) HOUR) BETWEEN ? AND ?
+                ORDER BY obs_date, obs_hour
+                """,
+                [ap, shift_start, as_of],
+            ).fetchall()
+
+            if not hours_data:
+                continue
+
+            waits = [float(r[2]) for r in hours_data if r[2] is not None]
+            pax_vals = [int(r[1]) for r in hours_data]
+            peak_wait = max(waits) if waits else 0.0
+            avg_wait = sum(waits) / len(waits) if waits else 0.0
+            total_pax = sum(pax_vals)
+            sla_breaches = sum(1 for w in waits if w >= config.BREACH_WAIT_MIN)
+
+            anomalies = con.execute(
+                """
+                SELECT detected_at, anomaly_type, severity, description
+                FROM anomaly_events
+                WHERE airport_code = ?
+                  AND detected_at BETWEEN ? AND ?
+                ORDER BY detected_at
+                """,
+                [ap, shift_start, as_of],
+            ).fetchall()
+
+            key_events: list[ShiftEvent] = []
+            for a_row in anomalies:
+                key_events.append(ShiftEvent(
+                    time=a_row[0],
+                    event_type=a_row[1],
+                    description=a_row[3] or f"{a_row[1]} detected",
+                    severity=a_row[2],
+                ))
+
+            if peak_wait >= config.BREACH_WAIT_MIN:
+                summary = f"{ap}: SLA breached in {sla_breaches} of {len(waits)} hours. Peak wait {peak_wait:.0f} min."
+            elif peak_wait >= config.WARN_WAIT_MIN:
+                summary = f"{ap}: Near SLA threshold. Peak wait {peak_wait:.1f} min, avg {avg_wait:.1f} min."
+            else:
+                summary = f"{ap}: Normal operations. Avg wait {avg_wait:.1f} min, {total_pax:,} pax processed."
+
+            if avg_wait >= config.BREACH_WAIT_MIN:
+                outlook = "Continued high demand expected. Consider preemptive lane openings."
+            elif avg_wait >= config.WARN_WAIT_MIN:
+                outlook = "Demand trending upward. Monitor closely for SLA threshold."
+            else:
+                outlook = "Stable conditions expected for the next shift."
+
+            handoffs.append(ShiftHandoff(
+                airport_code=ap,
+                shift_start=shift_start,
+                shift_end=as_of,
+                summary=summary,
+                peak_wait_min=round(peak_wait, 1),
+                avg_wait_min=round(avg_wait, 1),
+                total_pax=total_pax,
+                anomalies_during_shift=len(anomalies),
+                sla_breaches=sla_breaches,
+                key_events=key_events,
+                next_shift_outlook=outlook,
+            ))
+
+    return ShiftHandoffResponse(as_of=as_of, handoffs=handoffs)
+
+
+# -----------------------------------------------------------------------
+# Airport Terminal Breakdown
+# -----------------------------------------------------------------------
+
+class TerminalStatus(BaseModel):
+    terminal: str
+    estimated_pax: int
+    estimated_wait_min: float
+    sla_status: str
+
+
+class AirportTerminalResponse(BaseModel):
+    airport_code: str
+    as_of: datetime
+    terminals: list[TerminalStatus]
+
+
+@app.get("/airports/{airport_code}/terminals", response_model=AirportTerminalResponse)
+def airport_terminals(airport_code: str) -> AirportTerminalResponse:
+    """Terminal-level breakdown for an airport, distributing pax across terminals."""
+    _validate_airport(airport_code)
+
+    store = _store()
+    _ensure_ready(store)
+    as_of = _current_ts(store)
+
+    airport_info = config.AIRPORTS[airport_code]
+    terminals = airport_info.get("terminals", [])
+    if not terminals:
+        raise HTTPException(status_code=404, detail=f"No terminal data for {airport_code}")
+
+    with store.connect() as con:
+        row = con.execute(
+            """
+            SELECT SUM(pax) AS total_pax, AVG(wait_min_est) AS avg_wait
+            FROM tsa_throughput
+            WHERE grain = 'checkpoint_hour'
+              AND airport_code = ?
+              AND obs_date = ?
+              AND obs_hour = ?
+            """,
+            [airport_code, as_of.date(), as_of.hour],
+        ).fetchone()
+
+    total_pax = int(row[0]) if row and row[0] else 0
+    avg_wait = float(row[1]) if row and row[1] else 0.0
+
+    import numpy as np
+    rng = np.random.default_rng(config.RANDOM_SEED + hash(airport_code) % 1000)
+    weights = rng.dirichlet(np.ones(len(terminals)))
+
+    term_statuses: list[TerminalStatus] = []
+    for i, term in enumerate(terminals):
+        t_pax = int(total_pax * weights[i])
+        variation = 0.7 + 0.6 * weights[i] / max(weights)
+        t_wait = round(avg_wait * variation, 1)
+        term_statuses.append(TerminalStatus(
+            terminal=term,
+            estimated_pax=t_pax,
+            estimated_wait_min=t_wait,
+            sla_status=_sla_status(t_wait),
+        ))
+
+    return AirportTerminalResponse(
+        airport_code=airport_code,
+        as_of=as_of,
+        terminals=term_statuses,
+    )
